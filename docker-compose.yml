@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: legalflow-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: legalflow
+    networks:
+      - legalflow-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../Dockerfile
+      args:
+        - SERVICE=backend
+    container_name: legalflow-backend
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: development
+      PORT: 5000
+      MONGO_URI: mongodb://mongodb:27017/legalflow
+      JWT_SECRET: dev_jwt_secret_change_in_production
+      JWT_EXPIRE: 7d
+    depends_on:
+      - mongodb
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - ./uploads:/app/uploads
+    networks:
+      - legalflow-network
+    command: npm run dev
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../Dockerfile
+      args:
+        - SERVICE=frontend
+    container_name: legalflow-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      REACT_APP_API_URL: http://localhost:5000/api
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - legalflow-network
+    stdin_open: true
+    tty: true
+
+volumes:
+  mongo-data:
+
+networks:
+  legalflow-network:
+    driver: bridge
