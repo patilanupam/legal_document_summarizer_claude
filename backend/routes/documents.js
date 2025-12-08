@@ -11,7 +11,9 @@ const {
   uploadNewVersion,
   downloadDocument,
   getDocumentComments,
-  addComment
+  addComment,
+  shareDocument,
+  revokeAccess
 } = require('../controllers/documentController');
 const { protect } = require('../middleware/auth');
 const { authorize } = require('../middleware/roleCheck');
@@ -36,5 +38,9 @@ router.get('/:id/download', downloadDocument);
 // Comments
 router.get('/:id/comments', getDocumentComments);
 router.post('/:id/comments', addComment);
+
+// Sharing (Task 08)
+router.post('/:id/share', shareDocument);
+router.delete('/:id/share/:userId', revokeAccess);
 
 module.exports = router;

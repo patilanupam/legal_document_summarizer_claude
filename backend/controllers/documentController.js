@@ -104,9 +104,36 @@ const uploadDocument = async (req, res) => {
 // @access  Private
 const getDocuments = async (req, res) => {
   try {
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    let query = {};
+
+    // Role-based filtering (Task 07) + Shared documents (Task 08)
+    if (userRole === 'admin') {
+      // Admin can see all documents
+      query = {};
+    } else if (userRole === 'lawyer') {
+      // Lawyer can see own documents + assigned documents + shared documents
+      query = {
+        $or: [
+          { uploadedBy: userId },
+          { assignedTo: userId },
+          { 'sharedWith.userId': userId }
+        ]
+      };
+    } else if (userRole === 'client') {
+      // Client can see assigned documents + shared documents
+      query = {
+        $or: [
+          { assignedTo: userId },
+          { 'sharedWith.userId': userId }
+        ]
+      };
+    }
+
     // Basic query - no pagination, no filters (Task 02)
-    // Doesn't properly filter by user role (Task 07)
-    const documents = await Document.find()
+    const documents = await Document.find(query)
       .populate('uploadedBy', 'name email')
       .sort({ createdAt: -1 });
 
@@ -122,13 +149,36 @@ const getDocuments = async (req, res) => {
 // @access  Private
 const getDocumentById = async (req, res) => {
   try {
-    // IDOR vulnerability - doesn't check if user has access (Task 03)
     const document = await Document.findById(req.params.id)
       .populate('uploadedBy', 'name email')
       .populate('assignedTo', 'name email');
 
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
+    }
+
+    // Access check (Task 07 - fixes IDOR vulnerability from Task 03)
+    // Enhanced with shared permissions (Task 08)
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    // Admin can access all documents
+    if (userRole !== 'admin') {
+      // Check if user is the uploader or assigned
+      const isUploader = document.uploadedBy._id.toString() === userId.toString();
+      const isAssigned = document.assignedTo.some(
+        assignedUser => assignedUser._id.toString() === userId.toString()
+      );
+
+      // Check if document is shared with user and has canView permission
+      const sharedPermission = document.sharedWith.find(
+        share => share.userId.toString() === userId.toString()
+      );
+      const hasViewPermission = sharedPermission?.permissions?.canView;
+
+      if (!isUploader && !isAssigned && !hasViewPermission) {
+        return res.status(403).json({ message: 'Access denied to this document' });
+      }
     }
 
     res.json(document);
@@ -297,13 +347,35 @@ const uploadNewVersion = async (req, res) => {
 // @access  Private
 const downloadDocument = async (req, res) => {
   try {
-    const document = await Document.findById(req.params.id);
+    const document = await Document.findById(req.params.id).populate('assignedTo', '_id');
 
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
     }
 
-    // Should check access permissions but doesn't (Task 03, Task 07)
+    // Access check (Task 07 - fixes security issue from Task 03)
+    // Enhanced with download permission check (Task 08)
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    // Admin can download all documents
+    if (userRole !== 'admin') {
+      // Check if user is the uploader or assigned
+      const isUploader = document.uploadedBy.toString() === userId.toString();
+      const isAssigned = document.assignedTo.some(
+        assignedUser => assignedUser._id.toString() === userId.toString()
+      );
+
+      // Check if document is shared with canDownload permission
+      const sharedPermission = document.sharedWith.find(
+        share => share.userId.toString() === userId.toString()
+      );
+      const hasDownloadPermission = sharedPermission?.permissions?.canDownload;
+
+      if (!isUploader && !isAssigned && !hasDownloadPermission) {
+        return res.status(403).json({ message: 'Access denied to download this document' });
+      }
+    }
 
     if (!fs.existsSync(document.filePath)) {
       return res.status(404).json({ message: 'File not found' });
@@ -343,10 +415,31 @@ const addComment = async (req, res) => {
       return res.status(400).json({ message: 'Please provide comment text' });
     }
 
-    const document = await Document.findById(req.params.id);
+    const document = await Document.findById(req.params.id).populate('assignedTo', '_id');
 
     if (!document) {
       return res.status(404).json({ message: 'Document not found' });
+    }
+
+    // Check comment permission (Task 08)
+    const userId = req.user._id;
+    const userRole = req.user.role;
+
+    if (userRole !== 'admin') {
+      const isUploader = document.uploadedBy.toString() === userId.toString();
+      const isAssigned = document.assignedTo.some(
+        assignedUser => assignedUser._id.toString() === userId.toString()
+      );
+
+      // Check if document is shared with canComment permission
+      const sharedPermission = document.sharedWith.find(
+        share => share.userId.toString() === userId.toString()
+      );
+      const hasCommentPermission = sharedPermission?.permissions?.canComment;
+
+      if (!isUploader && !isAssigned && !hasCommentPermission) {
+        return res.status(403).json({ message: 'Access denied to comment on this document' });
+      }
     }
 
     const comment = await Comment.create({
@@ -364,6 +457,95 @@ const addComment = async (req, res) => {
   }
 };
 
+// @desc    Share document with user
+// @route   POST /api/documents/:id/share
+// @access  Private
+const shareDocument = async (req, res) => {
+  try {
+    const document = await Document.findById(req.params.id);
+
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    // Check if user has permission to share (owner or admin)
+    if (document.uploadedBy.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Not authorized to share this document' });
+    }
+
+    const { userId, permissions } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ message: 'Please provide userId to share with' });
+    }
+
+    // Check if already shared with this user
+    const existingShare = document.sharedWith.find(
+      share => share.userId.toString() === userId
+    );
+
+    if (existingShare) {
+      // Update permissions
+      existingShare.permissions = {
+        canView: permissions?.canView !== undefined ? permissions.canView : existingShare.permissions.canView,
+        canDownload: permissions?.canDownload !== undefined ? permissions.canDownload : existingShare.permissions.canDownload,
+        canComment: permissions?.canComment !== undefined ? permissions.canComment : existingShare.permissions.canComment
+      };
+    } else {
+      // Add new share
+      document.sharedWith.push({
+        userId,
+        permissions: {
+          canView: permissions?.canView !== undefined ? permissions.canView : true,
+          canDownload: permissions?.canDownload !== undefined ? permissions.canDownload : false,
+          canComment: permissions?.canComment !== undefined ? permissions.canComment : false
+        },
+        sharedAt: new Date(),
+        sharedBy: req.user._id
+      });
+    }
+
+    await document.save();
+
+    res.json({ message: 'Document shared successfully', document });
+  } catch (error) {
+    console.error('Share document error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// @desc    Revoke document access
+// @route   DELETE /api/documents/:id/share/:userId
+// @access  Private
+const revokeAccess = async (req, res) => {
+  try {
+    const document = await Document.findById(req.params.id);
+
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    // Check if user has permission to revoke (owner or admin)
+    if (document.uploadedBy.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Not authorized to revoke access to this document' });
+    }
+
+    const { userId } = req.params;
+
+    // Remove user from sharedWith
+    document.sharedWith = document.sharedWith.filter(
+      share => share.userId.toString() !== userId
+    );
+
+    await document.save();
+
+    res.json({ message: 'Access revoked successfully', document });
+  } catch (error) {
+    console.error('Revoke access error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
 module.exports = {
   upload,
   uploadDocument,
@@ -375,5 +557,7 @@ module.exports = {
   uploadNewVersion,
   downloadDocument,
   getDocumentComments,
-  addComment
+  addComment,
+  shareDocument,
+  revokeAccess
 };

@@ -24,6 +24,36 @@ const documentSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
+  // Task 08: Document Sharing & Permissions
+  sharedWith: [{
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    permissions: {
+      canView: {
+        type: Boolean,
+        default: true
+      },
+      canDownload: {
+        type: Boolean,
+        default: false
+      },
+      canComment: {
+        type: Boolean,
+        default: false
+      }
+    },
+    sharedAt: {
+      type: Date,
+      default: Date.now
+    },
+    sharedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }
+  }],
   filePath: {
     type: String,
     required: true

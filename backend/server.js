@@ -21,6 +21,7 @@ app.use(express.urlencoded({ extended: true })); // Body parser for URL-encoded 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/documents', require('./routes/documents'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/analytics', require('./routes/analytics')); // Task 10
 
 // Health check endpoint
 app.get('/health', (req, res) => {
