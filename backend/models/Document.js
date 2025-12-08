@@ -80,4 +80,16 @@ const documentSchema = new mongoose.Schema({
 documentSchema.index({ uploadedBy: 1, createdAt: -1 });
 documentSchema.index({ status: 1, category: 1 });
 
+// FIXED: Task 06 - Cascade delete associated comments when document is deleted
+documentSchema.pre('deleteOne', { document: true, query: false }, async function() {
+  try {
+    const Comment = require('./Comment');
+    const result = await Comment.deleteMany({ documentId: this._id });
+    console.log(`Cascaded delete: Removed ${result.deletedCount} comments for document ${this._id}`);
+  } catch (error) {
+    console.error('Error cascading delete comments:', error);
+    throw error; // Fail the document deletion if cascade fails
+  }
+});
+
 module.exports = mongoose.model('Document', documentSchema);
